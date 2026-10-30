@@ -15,7 +15,10 @@ import {
   AlertCircle,
   FileJson,
   Info,
-  HardDrive
+  HardDrive,
+  User,
+  LogOut,
+  Users
 } from 'lucide-react';
 import { storageService, STORAGE_KEYS } from '../utils/storage';
 
@@ -30,7 +33,11 @@ export default function SettingsPage() {
     restoreFromDiskBackup,
     resetAllData, 
     loadSampleData,
-    applications 
+    applications,
+    currentUser,
+    users,
+    logout,
+    switchUser
   } = useApp();
 
   const [weeklyGoalInput, setWeeklyGoalInput] = useState(settings.weeklyGoal || 10);
@@ -164,6 +171,58 @@ export default function SettingsPage() {
           ✅ <strong>Dual-Layer Storage Active:</strong> Your data is saved simultaneously to your browser's <code className="text-slate-200 font-mono">localStorage</code> AND to the physical file <code className="text-emerald-400 font-mono font-medium">data/tracker_data.json</code> in this project folder. Even if your browser cache, cookies, or site data are wiped by CleanMyMac, your records will automatically reload from this file!
         </p>
       </div>
+
+      {/* Account & Profile Switcher */}
+      {currentUser && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                <User className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-slate-100">
+                  Active 1337 Student Account
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Your profile and application data isolation
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:text-white bg-rose-500/10 hover:bg-rose-600 border border-rose-500/20 rounded-xl transition-all"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">Full Name</span>
+              <span className="text-slate-200 font-medium text-xs block mt-0.5 truncate">
+                {currentUser.fullName}
+              </span>
+            </div>
+
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">1337 Username / Campus</span>
+              <span className="text-indigo-300 font-mono text-xs block mt-0.5 truncate">
+                @{currentUser.username} • {currentUser.campus || '1337'}
+              </span>
+            </div>
+
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+              <span className="text-slate-500 block text-[10px] uppercase font-semibold">Email</span>
+              <span className="text-slate-300 font-mono text-xs block mt-0.5 truncate">
+                {currentUser.email}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Section 1: Weekly Goal */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">

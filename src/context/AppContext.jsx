@@ -1,22 +1,38 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import confetti from 'canvas-confetti';
-import { storageService, generateId, sanitizeApplication, DEFAULT_SETTINGS } from '../utils/storage';
+import { storageService, generateId, sanitizeApplication, DEFAULT_SETTINGS, DEFAULT_USERS } from '../utils/storage';
 import { APPLICATION_STATUSES, DEFAULT_DAILY_CHECKLIST, MILESTONES } from '../constants/statuses';
 import { computeApplicationStats } from '../utils/stats';
 import { toLocalDateString } from '../utils/dateUtils';
 import { getRealisticSampleApplications } from '../utils/sampleData';
+import { DEFAULT_LEETCODE_PROBLEMS } from '../constants/leetcodeProblems';
 
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
-  // Applications state
-  const [applications, setApplications] = useState(() => storageService.getApplications());
+  // Users state
+  const [users, setUsers] = useState(() => storageService.getUsers());
+
+  // Current logged in user
+  const [currentUser, setCurrentUser] = useState(() => storageService.getCurrentUser());
+
+  // All Applications state across users
+  const [allApplications, setAllApplications] = useState(() => storageService.getApplications());
+
+  // LeetCode Practice Problems for tech assessments
+  const [leetCodeProblems, setLeetCodeProblems] = useState(() => storageService.getLeetCodeProblems());
 
   // Settings state
   const [settings, setSettings] = useState(() => storageService.getSettings());
 
   // Theme state
   const [theme, setTheme] = useState(() => settings.theme || 'dark');
+
+  // Filtered applications for currently active user
+  const applications = useMemo(() => {
+    if (!currentUser) return [];
+    return allApplications.filter(app => !app.userId || app.userId === currentUser.id);
+  }, [allApplications, currentUser]);
 
   // Daily checklist state
   const [dailyTasks, setDailyTasks] = useState(() => {
@@ -72,15 +88,31 @@ export function AppProvider({ children }) {
   useEffect(() => {
     async function initFromDiskFile() {
       const diskData = await storageService.fetchDiskFile();
-      if (diskData && Array.isArray(diskData.applications) && diskData.applications.length > 0) {
-        setApplications(diskData.applications);
+      if (diskData) {
+        if (Array.isArray(diskData.applications) && diskData.applications.length > 0) {
+          setAllApplications(diskData.applications);
+        }
+        if (Array.isArray(diskData.users) && diskData.users.length > 0) {
+          setUsers(diskData.users);
+          storageService.saveUsers(diskData.users);
+        }
+        if (diskData.currentUser) {
+          setCurrentUser(diskData.currentUser);
+          storageService.setCurrentUser(diskData.currentUser);
+        }
         if (diskData.settings) setSettings(diskData.settings);
         if (diskData.dailyTasks) setDailyTasks(diskData.dailyTasks);
         if (diskData.celebratedMilestones) setCelebratedMilestones(diskData.celebratedMilestones);
-        showToast(`Loaded ${diskData.applications.length} applications from data/tracker_data.json`, 'info');
-      } else if (applications.length > 0) {
-        // Disk file is empty but localStorage has apps: write to disk file immediately
-        storageService.syncToDiskFile(applications, settings, dailyTasks, celebratedMilestones);
+        if (Array.isArray(diskData.leetCodeProblems) && diskData.leetCodeProblems.length > 0) {
+          setLeetCodeProblems(diskData.leetCodeProblems);
+          storageService.saveLeetCodeProblems(diskData.leetCodeProblems);
+        }
+        if (diskData.applications && diskData.applications.length > 0) {
+          showToast(`Loaded ${diskData.applications.length} applications from data/tracker_data.json`, 'info');
+        }
+      } else if (allApplications.length > 0 || leetCodeProblems.length > 0) {
+        // Disk file is empty but localStorage has data: write to disk file immediately
+        storageService.syncToDiskFile(allApplications, settings, dailyTasks, celebratedMilestones, users, currentUser, leetCodeProblems);
       }
     }
     initFromDiskFile();
@@ -88,9 +120,14 @@ export function AppProvider({ children }) {
 
   // Persist applications to localStorage & directly to data/tracker_data.json
   useEffect(() => {
-    storageService.saveApplications(applications);
-    storageService.syncToDiskFile(applications, settings, dailyTasks, celebratedMilestones);
-  }, [applications, settings, dailyTasks, celebratedMilestones]);
+    storageService.saveApplications(allApplications);
+    storageService.syncToDiskFile(allApplications, settings, dailyTasks, celebratedMilestones, users, currentUser, leetCodeProblems);
+  }, [allApplications, settings, dailyTasks, celebratedMilestones, users, currentUser, leetCodeProblems]);
+
+  // Persist leetcode problems
+  useEffect(() => {
+    storageService.saveLeetCodeProblems(leetCodeProblems);
+  }, [leetCodeProblems]);
 
   // Persist settings
   useEffect(() => {
@@ -177,15 +214,19 @@ export function AppProvider({ children }) {
     const newApp = sanitizeApplication({
       ...appData,
       id: generateId(),
+      userId: currentUser ? currentUser.id : null,
       appliedDate: isSubmitted ? (appData.applicationDate || todayStr) : null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
 
-    const updated = [newApp, ...applications];
-    setApplications(updated);
+    const updatedAll = [newApp, ...allApplications];
+    setAllApplications(updatedAll);
     showToast(`Added application for "${newApp.companyName}"`);
-    checkMilestonesAfterChange(updated);
+    
+    // Check milestones for current user's apps
+    const userApps = updatedAll.filter(app => !app.userId || (currentUser && app.userId === currentUser.id));
+    checkMilestonesAfterChange(userApps);
     return newApp;
   };
 
@@ -205,7 +246,7 @@ export function AppProvider({ children }) {
     let wasMovedToApplied = false;
     let becameOffer = false;
 
-    const updated = applications.map(app => {
+    const updatedAll = allApplications.map(app => {
       if (app.id !== id) return app;
 
       // Status change logic:
@@ -234,7 +275,7 @@ export function AppProvider({ children }) {
       });
     });
 
-    setApplications(updated);
+    setAllApplications(updatedAll);
     showToast('Application updated successfully');
 
     if (becameOffer) {
@@ -244,7 +285,8 @@ export function AppProvider({ children }) {
         'Offer Received'
       );
     } else if (wasMovedToApplied) {
-      checkMilestonesAfterChange(updated);
+      const userApps = updatedAll.filter(app => !app.userId || (currentUser && app.userId === currentUser.id));
+      checkMilestonesAfterChange(userApps);
     }
 
     return true;
@@ -252,9 +294,9 @@ export function AppProvider({ children }) {
 
   // Delete application
   const deleteApplication = (id) => {
-    const target = applications.find(a => a.id === id);
-    const updated = applications.filter(a => a.id !== id);
-    setApplications(updated);
+    const target = allApplications.find(a => a.id === id);
+    const updatedAll = allApplications.filter(a => a.id !== id);
+    setAllApplications(updatedAll);
     showToast(`Deleted application ${target ? `for "${target.companyName}"` : ''}`, 'info');
   };
 
@@ -341,7 +383,12 @@ export function AppProvider({ children }) {
       return { success: false, error: validation.error };
     }
 
-    setApplications(validation.applications);
+    const imported = validation.applications.map(app => ({
+      ...app,
+      userId: app.userId || (currentUser ? currentUser.id : null),
+    }));
+
+    setAllApplications(imported);
     if (validation.settings) {
       setSettings(validation.settings);
     }
@@ -351,8 +398,11 @@ export function AppProvider({ children }) {
 
   // Load sample data
   const loadSampleData = () => {
-    const samples = getRealisticSampleApplications();
-    setApplications(samples);
+    const samples = getRealisticSampleApplications().map(app => ({
+      ...app,
+      userId: currentUser ? currentUser.id : null,
+    }));
+    setAllApplications(prev => [...samples, ...prev]);
     showToast('Loaded 7 sample applications for Moroccan/remote tech opportunities');
   };
 
@@ -360,7 +410,7 @@ export function AppProvider({ children }) {
   const restoreFromDiskBackup = async () => {
     const diskBackup = await storageService.fetchDiskBackup();
     if (diskBackup && Array.isArray(diskBackup.applications) && diskBackup.applications.length > 0) {
-      setApplications(diskBackup.applications);
+      setAllApplications(diskBackup.applications);
       if (diskBackup.settings) setSettings(diskBackup.settings);
       showToast(`Restored ${diskBackup.applications.length} applications from project disk file!`);
       return true;
@@ -369,22 +419,236 @@ export function AppProvider({ children }) {
     return false;
   };
 
-  // Reset all data
+  // LeetCode Practice Actions
+  const updateProblemStatus = (problemId, newStatus) => {
+    let targetTitle = '';
+    let becameSolved = false;
+
+    setLeetCodeProblems(prev => {
+      return prev.map(prob => {
+        if (prob.id === problemId) {
+          targetTitle = prob.title;
+          if (prob.status !== 'solved' && newStatus === 'solved') {
+            becameSolved = true;
+          }
+          return {
+            ...prob,
+            status: newStatus,
+            solvedAt: newStatus === 'solved' ? (prob.solvedAt || new Date().toISOString()) : null,
+            lastUpdated: new Date().toISOString(),
+          };
+        }
+        return prob;
+      });
+    });
+
+    if (becameSolved) {
+      triggerCelebration(
+        `Problem Solved! 🚀`,
+        `Awesome job solving "${targetTitle}". Technical assessment prep pays off!`,
+        'LeetCode'
+      );
+      showToast(`Marked "${targetTitle}" as Solved! 🎯`, 'success');
+    } else if (newStatus === 'working') {
+      showToast(`Now working on "${targetTitle}" ⚡`, 'info');
+    } else if (newStatus === 'todo') {
+      showToast(`Reset "${targetTitle}" to Todo.`, 'info');
+    }
+  };
+
+  const addLeetCodeProblem = (newProblem) => {
+    const title = (newProblem.title || '').trim();
+    if (!title) {
+      showToast('Problem title is required', 'error');
+      return { success: false, reason: 'Problem title is required' };
+    }
+
+    const id = 'custom_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 6);
+    const problem = {
+      id,
+      number: newProblem.number ? parseInt(newProblem.number, 10) : null,
+      title,
+      difficulty: newProblem.difficulty || 'Medium',
+      category: newProblem.category || 'General OA / Assessment',
+      url: (newProblem.url || '').trim() || `https://leetcode.com/problemset/all/?search=${encodeURIComponent(title)}`,
+      status: newProblem.status || 'todo',
+      companies: Array.isArray(newProblem.companies)
+        ? newProblem.companies
+        : (typeof newProblem.companies === 'string' ? newProblem.companies.split(',').map(c => c.trim()).filter(Boolean) : []),
+      notes: newProblem.notes || '',
+      lastUpdated: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      isCustom: true,
+    };
+
+    setLeetCodeProblems(prev => [problem, ...prev]);
+    showToast(`Added "${title}" to your LeetCode list!`);
+    return { success: true, problem };
+  };
+
+  const updateLeetCodeProblem = (problemId, updates) => {
+    setLeetCodeProblems(prev =>
+      prev.map(p => (p.id === problemId ? { ...p, ...updates, lastUpdated: new Date().toISOString() } : p))
+    );
+    showToast('Problem updated');
+  };
+
+  const deleteLeetCodeProblem = (problemId) => {
+    setLeetCodeProblems(prev => prev.filter(p => p.id !== problemId));
+    showToast('Problem removed from list', 'info');
+  };
+
+  const resetLeetCodeProblems = () => {
+    setLeetCodeProblems(DEFAULT_LEETCODE_PROBLEMS);
+    storageService.saveLeetCodeProblems(DEFAULT_LEETCODE_PROBLEMS);
+    showToast('Reset LeetCode problems to curated defaults', 'info');
+  };
+
+  // Reset all data for current user
   const resetAllData = () => {
-    storageService.clearAllTrackerData();
-    storageService.syncToDiskFile([], DEFAULT_SETTINGS, null, []);
-    setApplications([]);
+    if (currentUser) {
+      const remaining = allApplications.filter(app => app.userId && app.userId !== currentUser.id);
+      setAllApplications(remaining);
+    } else {
+      setAllApplications([]);
+    }
     setSettings(DEFAULT_SETTINGS);
     setCelebratedMilestones([]);
     setDailyTasks({
       date: toLocalDateString(new Date()),
       items: DEFAULT_DAILY_CHECKLIST.map(t => ({ ...t, completed: false }))
     });
-    showToast('All local application records have been cleared', 'info');
+    showToast('Your application records have been cleared', 'info');
+  };
+
+  // User Auth Actions
+  const login = async (usernameOrEmail, password) => {
+    const cleanInput = (usernameOrEmail || '').trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+
+    // Pool all known users from memory and localStorage
+    let pool = Array.isArray(users) ? [...users] : [];
+    const localUsers = storageService.getUsers();
+    if (Array.isArray(localUsers)) {
+      for (const u of localUsers) {
+        if (!pool.some(existing => existing.id === u.id)) {
+          pool.push(u);
+        }
+      }
+    }
+
+    const matchesUser = (u) => {
+      if (!u) return false;
+      const uName = (u.username || '').trim().toLowerCase();
+      const uEmail = (u.email || '').trim().toLowerCase();
+      const matchIdentity = 
+        uName === cleanInput || 
+        uEmail === cleanInput ||
+        (cleanInput === 'yhajji' && uName === 'yahajji') ||
+        (cleanInput === 'yahajji' && uName === 'yhajji');
+      
+      const matchPass = u.password === password || (u.password && u.password.trim() === cleanPassword);
+      return matchIdentity && matchPass;
+    };
+
+    let found = pool.find(matchesUser);
+
+    // If not found in memory/localStorage, query data/tracker_data.json directly
+    if (!found) {
+      try {
+        const diskData = await storageService.fetchDiskFile();
+        if (diskData && Array.isArray(diskData.users)) {
+          pool = diskData.users;
+          setUsers(diskData.users);
+          storageService.saveUsers(diskData.users);
+          found = diskData.users.find(matchesUser);
+        }
+      } catch (e) {
+        console.error('Error fetching disk users during login:', e);
+      }
+    }
+
+    if (!found) {
+      return { success: false, error: 'Invalid username/email or password' };
+    }
+
+    setCurrentUser(found);
+    storageService.setCurrentUser(found);
+    showToast(`Welcome back, ${found.fullName}!`);
+    return { success: true, user: found };
+  };
+
+  const register = ({ fullName, username, email, campus, password }) => {
+    const cleanUser = (username || '').trim().toLowerCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    if (!fullName || !fullName.trim()) {
+      return { success: false, error: 'Full name is required' };
+    }
+    if (!cleanUser) {
+      return { success: false, error: 'Username is required' };
+    }
+    if (!cleanEmail) {
+      return { success: false, error: 'Email is required' };
+    }
+    if (!password || password.length < 4) {
+      return { success: false, error: 'Password must be at least 4 characters' };
+    }
+
+    if (users.some(u => u.username.toLowerCase() === cleanUser)) {
+      return { success: false, error: 'Username is already taken' };
+    }
+    if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
+      return { success: false, error: 'Email is already registered' };
+    }
+
+    const newUser = {
+      id: 'user_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 5),
+      fullName: fullName.trim(),
+      username: cleanUser,
+      email: cleanEmail,
+      campus: campus || '1337 Khouribga',
+      password,
+      role: '1337 Student',
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedUsers = [...users, newUser];
+    setUsers(updatedUsers);
+    storageService.saveUsers(updatedUsers);
+
+    setCurrentUser(newUser);
+    storageService.setCurrentUser(newUser);
+    storageService.syncToDiskFile(allApplications, settings, dailyTasks, celebratedMilestones, updatedUsers, newUser);
+
+    showToast(`Account created! Welcome to Track1337, ${newUser.fullName}!`);
+    return { success: true, user: newUser };
+  };
+
+  const logout = () => {
+    setCurrentUser(null);
+    storageService.clearCurrentUser();
+    showToast('You have logged out.');
+  };
+
+  const switchUser = (userId) => {
+    const target = users.find(u => u.id === userId);
+    if (target) {
+      setCurrentUser(target);
+      storageService.setCurrentUser(target);
+      showToast(`Switched account to ${target.fullName}`);
+    }
   };
 
   const value = {
+    users,
+    currentUser,
+    login,
+    register,
+    logout,
+    switchUser,
     applications,
+    allApplications,
     settings,
     theme,
     dailyTasks,
@@ -392,6 +656,12 @@ export function AppProvider({ children }) {
     toast,
     celebration,
     celebratedMilestones,
+    leetCodeProblems,
+    updateProblemStatus,
+    addLeetCodeProblem,
+    updateLeetCodeProblem,
+    deleteLeetCodeProblem,
+    resetLeetCodeProblems,
     addApplication,
     updateApplication,
     deleteApplication,

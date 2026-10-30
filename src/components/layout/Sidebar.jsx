@@ -7,13 +7,18 @@ import {
   Settings, 
   Info, 
   Flame, 
-  CheckCircle2,
-  Terminal
+  CheckCircle2, 
+  Code2,
+  Terminal,
+  LogOut
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
 export default function Sidebar({ isOpen, onClose }) {
-  const { applications, stats } = useApp();
+  const { applications, stats, currentUser, logout, leetCodeProblems } = useApp();
+
+  const workingProblemsCount = leetCodeProblems ? leetCodeProblems.filter(p => p.status === 'working').length : 0;
+  const solvedCount = leetCodeProblems ? leetCodeProblems.filter(p => p.status === 'solved').length : 0;
 
   const navItems = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -22,6 +27,12 @@ export default function Sidebar({ isOpen, onClose }) {
       label: 'Applications', 
       icon: Briefcase,
       badge: applications.length > 0 ? applications.length : null
+    },
+    { 
+      to: '/practice', 
+      label: 'LeetCode Prep', 
+      icon: Code2,
+      badge: workingProblemsCount > 0 ? `${workingProblemsCount} active` : (solvedCount > 0 ? `${solvedCount} solved` : null)
     },
     { to: '/analytics', label: 'Analytics', icon: BarChart3 },
     { to: '/settings', label: 'Settings', icon: Settings },
@@ -118,6 +129,34 @@ export default function Sidebar({ isOpen, onClose }) {
             </div>
           </div>
         </div>
+
+        {/* User Profile & Logout */}
+        {currentUser && (
+          <div className="p-3 mx-3 mb-2 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs uppercase flex-shrink-0 shadow-sm shadow-indigo-600/30">
+                {currentUser.fullName ? currentUser.fullName.slice(0, 1) : 'U'}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-slate-200 truncate">
+                  {currentUser.fullName}
+                </div>
+                <div className="text-[10px] text-slate-400 truncate">
+                  @{currentUser.username} • {currentUser.campus || '1337'}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors flex-shrink-0"
+              title="Sign Out"
+              aria-label="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* 1337 Student Footer tag */}
         <div className="p-4 border-t border-slate-800/80 text-center">

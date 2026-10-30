@@ -3,13 +3,20 @@
  * and JSON import/export routines.
  */
 
+import { DEFAULT_LEETCODE_PROBLEMS } from '../constants/leetcodeProblems';
+
 export const STORAGE_KEYS = {
   APPLICATIONS: 'track1337_applications_v1',
   SETTINGS: 'track1337_settings_v1',
   DAILY_TASKS: 'track1337_daily_tasks_v1',
   CELEBRATED_MILESTONES: 'track1337_milestones_v1',
-  THEME: 'track1337_theme_v1'
+  THEME: 'track1337_theme_v1',
+  USERS: 'track1337_users_v1',
+  CURRENT_USER: 'track1337_current_user_v1',
+  LEETCODE_PROBLEMS: 'track1337_leetcode_problems_v1',
 };
+
+export const DEFAULT_USERS = [];
 
 export const DEFAULT_SETTINGS = {
   weeklyGoal: 10,
@@ -59,6 +66,7 @@ export function sanitizeApplication(rawApp) {
   const nowIso = new Date().toISOString();
   return {
     id: rawApp.id || generateId(),
+    userId: rawApp.userId || null,
     companyName: (rawApp.companyName || '').trim(),
     jobTitle: (rawApp.jobTitle || '').trim(),
     applicationDate: rawApp.applicationDate || new Date().toISOString().split('T')[0],
@@ -171,15 +179,40 @@ export const storageService = {
     }
   },
 
+  // LeetCode Practice Problems
+  getLeetCodeProblems() {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.LEETCODE_PROBLEMS);
+      const parsed = safeJsonParse(data, null);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+      return DEFAULT_LEETCODE_PROBLEMS;
+    } catch (e) {
+      return DEFAULT_LEETCODE_PROBLEMS;
+    }
+  },
+
+  saveLeetCodeProblems(problems) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.LEETCODE_PROBLEMS, JSON.stringify(problems));
+      return true;
+    } catch (e) {
+      console.error('Failed to save leetcode problems to storage:', e);
+      return false;
+    }
+  },
+
   // Export complete backup as JSON file
-  exportBackupFile(applications, settings) {
+  exportBackupFile(applications, settings, leetCodeProblems = null) {
     try {
       const backupData = {
         app: 'Track1337-Internship-Tracker',
-        version: '1.0',
+        version: '1.2',
         exportedAt: new Date().toISOString(),
         settings: settings || DEFAULT_SETTINGS,
         applications: applications.map(sanitizeApplication),
+        leetCodeProblems: leetCodeProblems || this.getLeetCodeProblems(),
       };
 
       const jsonStr = JSON.stringify(backupData, null, 2);
@@ -273,6 +306,61 @@ export const storageService = {
     };
   },
 
+  // Users
+  getUsers() {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.USERS);
+      const parsed = safeJsonParse(data, null);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  saveUsers(users) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+      return true;
+    } catch (e) {
+      console.error('Failed to save users:', e);
+      return false;
+    }
+  },
+
+  getCurrentUser() {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+      return safeJsonParse(data, null);
+    } catch (e) {
+      return null;
+    }
+  },
+
+  setCurrentUser(user) {
+    try {
+      if (user) {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  clearCurrentUser() {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+
   // Clear all tracker local data
   clearAllTrackerData() {
     try {
@@ -280,6 +368,7 @@ export const storageService = {
       localStorage.removeItem(STORAGE_KEYS.SETTINGS);
       localStorage.removeItem(STORAGE_KEYS.DAILY_TASKS);
       localStorage.removeItem(STORAGE_KEYS.CELEBRATED_MILESTONES);
+      localStorage.removeItem(STORAGE_KEYS.LEETCODE_PROBLEMS);
       return true;
     } catch (e) {
       console.error('Failed to clear storage:', e);
@@ -306,16 +395,19 @@ export const storageService = {
   },
 
   // Auto-sync all data to local project disk file (data/tracker_data.json)
-  async syncToDiskFile(applications, settings, dailyTasks = null, celebratedMilestones = []) {
+  async syncToDiskFile(applications, settings, dailyTasks = null, celebratedMilestones = [], users = null, currentUser = null, leetCodeProblems = null) {
     try {
       if (typeof window === 'undefined' || !window.fetch) return false;
       const payload = {
         app: 'Track1337-Internship-Tracker',
-        version: '1.0',
+        version: '1.2',
         lastUpdated: new Date().toISOString(),
         settings: settings || DEFAULT_SETTINGS,
         dailyTasks: dailyTasks || null,
         celebratedMilestones: celebratedMilestones || [],
+        users: users || this.getUsers(),
+        currentUser: currentUser || this.getCurrentUser(),
+        leetCodeProblems: leetCodeProblems || this.getLeetCodeProblems(),
         applications: applications.map(sanitizeApplication),
       };
       const res = await fetch('/api/storage', {
@@ -343,6 +435,9 @@ export const storageService = {
           settings: data.settings || null,
           dailyTasks: data.dailyTasks || null,
           celebratedMilestones: data.celebratedMilestones || [],
+          users: Array.isArray(data.users) ? data.users : null,
+          currentUser: data.currentUser || null,
+          leetCodeProblems: Array.isArray(data.leetCodeProblems) ? data.leetCodeProblems : null,
           lastUpdated: data.lastUpdated || null,
         };
       }

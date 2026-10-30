@@ -9,6 +9,7 @@ import OverviewCharts from '../components/dashboard/OverviewCharts';
 import MilestonesCard from '../components/dashboard/MilestonesCard';
 import FollowUpCard from '../components/dashboard/FollowUpCard';
 import RecentApplicationsList from '../components/dashboard/RecentApplicationsList';
+import LeetCodeWidget from '../components/dashboard/LeetCodeWidget';
 import ApplicationDetailsModal from '../components/applications/ApplicationDetailsModal';
 import ApplicationModal from '../components/applications/ApplicationModal';
 import EmptyState from '../components/common/EmptyState';
@@ -70,13 +71,17 @@ export default function DashboardPage() {
 
       {/* Empty State Onboarding if no applications */}
       {applications.length === 0 ? (
-        <EmptyState
-          title="Welcome to your Local Internship Tracker!"
-          description="You haven't logged any applications yet. Add your first job lead, or load realistic sample applications for Moroccan & remote tech opportunities to explore the dashboard features."
-          actionLabel="Add Your First Application"
-          onAction={openAddModal}
-          onLoadSamples={loadSampleData}
-        />
+        <div className="space-y-6">
+          <EmptyState
+            title="Welcome to your Local Internship Tracker!"
+            description="You haven't logged any applications yet. Add your first job lead, or load realistic sample applications for Moroccan & remote tech opportunities to explore the dashboard features."
+            actionLabel="Add Your First Application"
+            onAction={openAddModal}
+            onLoadSamples={loadSampleData}
+          />
+          {/* LeetCode Practice Readiness Widget */}
+          <LeetCodeWidget />
+        </div>
       ) : (
         <>
           {/* Key Metrics Grid */}
@@ -84,6 +89,9 @@ export default function DashboardPage() {
 
           {/* Daily Action Checklist & Motivation */}
           <DailyActionPanel />
+
+          {/* LeetCode Assessment Prep Widget */}
+          <LeetCodeWidget />
 
           {/* Weekly Target & Streak Progress */}
           <WeeklyGoalCard />
