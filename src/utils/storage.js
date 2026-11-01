@@ -49,14 +49,13 @@ export function validateApplication(app) {
   if (!app || typeof app !== 'object') {
     return { valid: false, reason: 'Record must be a valid object' };
   }
-  if (!app.companyName || typeof app.companyName !== 'string' || !app.companyName.trim()) {
+  const company = (app.companyName || app.company || app.company_name || '').toString().trim();
+  if (!company) {
     return { valid: false, reason: 'Company name is required' };
   }
-  if (!app.jobTitle || typeof app.jobTitle !== 'string' || !app.jobTitle.trim()) {
+  const job = (app.jobTitle || app.title || app.position || app.role || app.job_title || '').toString().trim();
+  if (!job) {
     return { valid: false, reason: 'Job title is required' };
-  }
-  if (!app.applicationDate || typeof app.applicationDate !== 'string') {
-    return { valid: false, reason: 'Application date is required' };
   }
   return { valid: true };
 }
@@ -64,29 +63,45 @@ export function validateApplication(app) {
 // Sanitize application object
 export function sanitizeApplication(rawApp) {
   const nowIso = new Date().toISOString();
+  const todayDate = nowIso.split('T')[0];
+  const company = (rawApp.companyName || rawApp.company || rawApp.company_name || 'Unnamed Company').toString().trim();
+  const job = (rawApp.jobTitle || rawApp.title || rawApp.position || rawApp.role || rawApp.job_title || 'Intern').toString().trim();
+
+  let appDate = rawApp.applicationDate || rawApp.appliedDate || rawApp.date || null;
+  if (!appDate && rawApp.createdAt) {
+    try {
+      appDate = new Date(rawApp.createdAt).toISOString().split('T')[0];
+    } catch (e) {
+      appDate = todayDate;
+    }
+  }
+  if (!appDate) {
+    appDate = todayDate;
+  }
+
   return {
     id: rawApp.id || generateId(),
     userId: rawApp.userId || null,
-    companyName: (rawApp.companyName || '').trim(),
-    jobTitle: (rawApp.jobTitle || '').trim(),
-    applicationDate: rawApp.applicationDate || new Date().toISOString().split('T')[0],
-    appliedDate: rawApp.appliedDate || (rawApp.status !== 'Wishlist' && rawApp.status !== 'Preparing' ? rawApp.applicationDate : null),
-    applicationMethod: rawApp.applicationMethod || 'Company Website',
-    applicationUrl: (rawApp.applicationUrl || '').trim(),
-    companyWebsite: (rawApp.companyWebsite || '').trim(),
-    location: (rawApp.location || '').trim(),
+    companyName: company,
+    jobTitle: job,
+    applicationDate: appDate,
+    appliedDate: rawApp.appliedDate || (rawApp.status !== 'Wishlist' && rawApp.status !== 'Preparing' ? appDate : null),
+    applicationMethod: rawApp.applicationMethod || rawApp.method || 'Company Website',
+    applicationUrl: (rawApp.applicationUrl || rawApp.url || rawApp.link || '').toString().trim(),
+    companyWebsite: (rawApp.companyWebsite || rawApp.website || '').toString().trim(),
+    location: (rawApp.location || rawApp.city || '').toString().trim(),
     workArrangement: rawApp.workArrangement || 'Hybrid',
     opportunityType: rawApp.opportunityType || 'Internship',
     techStack: Array.isArray(rawApp.techStack) 
       ? rawApp.techStack 
       : (typeof rawApp.techStack === 'string' ? rawApp.techStack.split(',').map(s => s.trim()).filter(Boolean) : []),
     status: rawApp.status || 'Applied',
-    recruiterName: (rawApp.recruiterName || '').trim(),
-    contactInfo: (rawApp.contactInfo || rawApp.contactEmail || '').trim(),
+    recruiterName: (rawApp.recruiterName || rawApp.recruiter || '').toString().trim(),
+    contactInfo: (rawApp.contactInfo || rawApp.contactEmail || rawApp.email || '').toString().trim(),
     nextFollowUpDate: rawApp.nextFollowUpDate || '',
     interviewDate: rawApp.interviewDate || '',
     interviewTime: rawApp.interviewTime || '',
-    notes: rawApp.notes || '',
+    notes: (rawApp.notes || '').toString(),
     updatedAt: rawApp.updatedAt || nowIso,
     createdAt: rawApp.createdAt || nowIso,
   };
@@ -204,13 +219,15 @@ export const storageService = {
   },
 
   // Export complete backup as JSON file
-  exportBackupFile(applications, settings, leetCodeProblems = null) {
+  exportBackupFile(applications, settings, leetCodeProblems = null, extraData = {}) {
     try {
       const backupData = {
         app: 'Track1337-Internship-Tracker',
         version: '1.2',
         exportedAt: new Date().toISOString(),
         settings: settings || DEFAULT_SETTINGS,
+        dailyTasks: extraData.dailyTasks || null,
+        celebratedMilestones: extraData.celebratedMilestones || [],
         applications: applications.map(sanitizeApplication),
         leetCodeProblems: leetCodeProblems || this.getLeetCodeProblems(),
       };
@@ -237,7 +254,7 @@ export const storageService = {
   validateImportPayload(content) {
     let parsed;
     try {
-      parsed = JSON.parse(content);
+      parsed = typeof content === 'string' ? JSON.parse(content) : content;
     } catch (err) {
       return {
         valid: false,
@@ -246,21 +263,33 @@ export const storageService = {
     }
 
     // Support either direct array of applications or full backup object { applications: [...] }
+    // Also support aliases: 'apply', 'applies', 'data', 'items'
     let rawApps = [];
     let settings = null;
+    let dailyTasks = null;
+    let celebratedMilestones = null;
+    let leetCodeProblems = null;
+    let users = null;
+    let currentUser = null;
 
     if (Array.isArray(parsed)) {
       rawApps = parsed;
     } else if (parsed && typeof parsed === 'object') {
-      if (Array.isArray(parsed.applications)) {
-        rawApps = parsed.applications;
-        settings = parsed.settings || null;
+      const candidates = parsed.applications || parsed.apply || parsed.applies || parsed.data || parsed.items;
+      if (Array.isArray(candidates)) {
+        rawApps = candidates;
       } else {
         return {
           valid: false,
-          error: 'JSON structure unrecognized. Expected an array of applications or a backup object with an "applications" array.'
+          error: 'JSON structure unrecognized. Expected an array of applications or a backup object with an "applications" or "apply" array.'
         };
       }
+      settings = parsed.settings || null;
+      dailyTasks = parsed.dailyTasks || null;
+      celebratedMilestones = Array.isArray(parsed.celebratedMilestones) ? parsed.celebratedMilestones : null;
+      leetCodeProblems = Array.isArray(parsed.leetCodeProblems) ? parsed.leetCodeProblems : null;
+      users = Array.isArray(parsed.users) ? parsed.users : null;
+      currentUser = parsed.currentUser || null;
     } else {
       return {
         valid: false,
@@ -299,6 +328,11 @@ export const storageService = {
       valid: true,
       applications: validApps,
       settings: settings,
+      dailyTasks: dailyTasks,
+      celebratedMilestones: celebratedMilestones,
+      leetCodeProblems: leetCodeProblems,
+      users: users,
+      currentUser: currentUser,
       totalCount: rawApps.length,
       validCount: validApps.length,
       invalidCount: invalidItems.length,

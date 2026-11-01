@@ -47,6 +47,7 @@ export default function SettingsPage() {
   // Import state
   const fileInputRef = useRef(null);
   const [importPendingPayload, setImportPendingPayload] = useState(null);
+  const [importPendingCount, setImportPendingCount] = useState(0);
   const [importPreviewModal, setImportPreviewModal] = useState(false);
   const [importError, setImportError] = useState(null);
 
@@ -70,9 +71,10 @@ export default function SettingsPage() {
         try {
           // Pre-test structure
           const parsed = JSON.parse(content);
-          const appsCount = Array.isArray(parsed) 
-            ? parsed.length 
-            : (Array.isArray(parsed?.applications) ? parsed.applications.length : 0);
+          const candidateList = Array.isArray(parsed) 
+            ? parsed 
+            : (parsed?.applications || parsed?.apply || parsed?.applies || parsed?.data || parsed?.items || []);
+          const appsCount = Array.isArray(candidateList) ? candidateList.length : 0;
 
           if (appsCount === 0) {
             setImportError('No valid applications found in this JSON file.');
@@ -80,6 +82,7 @@ export default function SettingsPage() {
           }
 
           setImportPendingPayload(content);
+          setImportPendingCount(appsCount);
           setImportPreviewModal(true);
         } catch (err) {
           setImportError('Invalid JSON format. Please upload a valid .json backup file.');
@@ -471,10 +474,10 @@ export default function SettingsPage() {
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
               <p className="font-semibold text-sm flex items-center gap-1.5 mb-1">
                 <AlertCircle className="w-4 h-4" />
-                Data Replacement Notice
+                Data Restoration Confirmation
               </p>
               <p>
-                Importing will replace your current {applications.length} applications with the records from the backup file.
+                Found <strong>{importPendingCount} applications</strong> in the backup file. Restoring will apply these records to your active account ({currentUser?.fullName || 'Current User'}) and replace your current {applications.length} applications.
               </p>
             </div>
 

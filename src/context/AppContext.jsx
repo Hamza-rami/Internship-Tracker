@@ -31,8 +31,17 @@ export function AppProvider({ children }) {
   // Filtered applications for currently active user
   const applications = useMemo(() => {
     if (!currentUser) return [];
-    return allApplications.filter(app => !app.userId || app.userId === currentUser.id);
-  }, [allApplications, currentUser]);
+    return allApplications.filter(app => {
+      // 1. Direct match with current user id
+      if (app.userId === currentUser.id) return true;
+      // 2. Unassigned applications belong to the active user
+      if (!app.userId) return true;
+      // 3. Fallback: If app's userId doesn't match any other registered user in the system
+      // (e.g. from a restored backup created under a different id/session), adopt it for current user
+      const isOwnedByOtherUser = users.some(u => u.id === app.userId && u.id !== currentUser.id);
+      return !isOwnedByOtherUser;
+    });
+  }, [allApplications, currentUser, users]);
 
   // Daily checklist state
   const [dailyTasks, setDailyTasks] = useState(() => {
@@ -123,6 +132,24 @@ export function AppProvider({ children }) {
     storageService.saveApplications(allApplications);
     storageService.syncToDiskFile(allApplications, settings, dailyTasks, celebratedMilestones, users, currentUser, leetCodeProblems);
   }, [allApplications, settings, dailyTasks, celebratedMilestones, users, currentUser, leetCodeProblems]);
+
+  // Auto-migrate orphan application records to currentUser.id in storage
+  useEffect(() => {
+    if (!currentUser || !Array.isArray(allApplications) || allApplications.length === 0) return;
+    let needsUpdate = false;
+    const migrated = allApplications.map(app => {
+      const isOtherUser = users.some(u => u.id === app.userId && u.id !== currentUser.id);
+      if (!isOtherUser && app.userId !== currentUser.id) {
+        needsUpdate = true;
+        return { ...app, userId: currentUser.id };
+      }
+      return app;
+    });
+    if (needsUpdate) {
+      setAllApplications(migrated);
+      storageService.saveApplications(migrated);
+    }
+  }, [currentUser?.id, users.length]);
 
   // Persist leetcode problems
   useEffect(() => {
@@ -368,7 +395,12 @@ export function AppProvider({ children }) {
 
   // Backup Export
   const exportData = () => {
-    const res = storageService.exportBackupFile(applications, settings);
+    const res = storageService.exportBackupFile(
+      applications, 
+      settings, 
+      leetCodeProblems,
+      { dailyTasks, celebratedMilestones }
+    );
     if (res.success) {
       showToast('Backup exported successfully');
     } else {
@@ -383,17 +415,122 @@ export function AppProvider({ children }) {
       return { success: false, error: validation.error };
     }
 
+    const activeUserId = currentUser ? currentUser.id : null;
     const imported = validation.applications.map(app => ({
       ...app,
-      userId: app.userId || (currentUser ? currentUser.id : null),
+      userId: activeUserId || app.userId || null,
+    }));
+
+    // Retain other registered users' applications if any; replace current user's
+    const otherUsersApps = allApplications.filter(app => 
+      activeUserId && app.userId && app.userId !== activeUserId && users.some(u => u.id === app.userId)
+    );
+
+    const merged = [...otherUsersApps, ...imported];
+    setAllApplications(merged);
+    storageService.saveApplications(merged);
+
+    if (validation.settings) {
+      setSettings(validation.settings);
+      storageService.saveSettings(validation.settings);
+    }
+    if (validation.dailyTasks) {
+      setDailyTasks(validation.dailyTasks);
+      storageService.saveDailyTasks(validation.dailyTasks);
+    }
+    if (validation.celebratedMilestones) {
+      setCelebratedMilestones(validation.celebratedMilestones);
+      storageService.saveMilestones(validation.celebratedMilestones);
+    }
+    if (validation.leetCodeProblems) {
+      setLeetCodeProblems(validation.leetCodeProblems);
+      storageService.saveLeetCodeProblems(validation.leetCodeProblems);
+    }
+    if (Array.isArray(validation.users) && validation.users.length > 0) {
+      const mergedUsers = [...users];
+      validation.users.forEach(u => {
+        if (!mergedUsers.some(existing => existing.id === u.id || existing.username === u.username || existing.email === u.email)) {
+          mergedUsers.push(u);
+        }
+      });
+      setUsers(mergedUsers);
+      storageService.saveUsers(mergedUsers);
+    }
+
+    showToast(`Successfully restored ${validation.validCount} applications!`);
+    return { success: true, count: validation.validCount, warnings: validation.warnings };
+  };
+
+  // Restore full backup and auto-login (useful on login screen or new devices)
+  const restoreAccountFromBackup = (fileContent) => {
+    const validation = storageService.validateImportPayload(fileContent);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    let userToLogin = null;
+    let updatedUsers = Array.isArray(users) ? [...users] : [];
+
+    if (Array.isArray(validation.users) && validation.users.length > 0) {
+      validation.users.forEach(u => {
+        if (!updatedUsers.some(existing => existing.id === u.id || existing.username === u.username || existing.email === u.email)) {
+          updatedUsers.push(u);
+        }
+      });
+      userToLogin = validation.currentUser || validation.users[0];
+    } else {
+      if (updatedUsers.length > 0) {
+        userToLogin = updatedUsers[0];
+      } else {
+        userToLogin = {
+          id: 'user_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 5),
+          fullName: '1337 Student',
+          username: 'student',
+          email: 'student@1337.ma',
+          campus: '1337 Khouribga',
+          password: 'password1337',
+          role: '1337 Student',
+          createdAt: new Date().toISOString(),
+        };
+        updatedUsers.push(userToLogin);
+      }
+    }
+
+    setUsers(updatedUsers);
+    storageService.saveUsers(updatedUsers);
+
+    setCurrentUser(userToLogin);
+    storageService.setCurrentUser(userToLogin);
+
+    // Assign restored applications to userToLogin
+    const targetUserId = userToLogin.id;
+    const imported = validation.applications.map(app => ({
+      ...app,
+      userId: targetUserId,
     }));
 
     setAllApplications(imported);
+    storageService.saveApplications(imported);
+
     if (validation.settings) {
       setSettings(validation.settings);
+      storageService.saveSettings(validation.settings);
     }
-    showToast(`Successfully restored ${validation.validCount} applications!`);
-    return { success: true, count: validation.validCount, warnings: validation.warnings };
+    if (validation.dailyTasks) {
+      setDailyTasks(validation.dailyTasks);
+      storageService.saveDailyTasks(validation.dailyTasks);
+    }
+    if (validation.celebratedMilestones) {
+      setCelebratedMilestones(validation.celebratedMilestones);
+      storageService.saveMilestones(validation.celebratedMilestones);
+    }
+    if (validation.leetCodeProblems) {
+      setLeetCodeProblems(validation.leetCodeProblems);
+      storageService.saveLeetCodeProblems(validation.leetCodeProblems);
+    }
+
+    showToast(`Restored account and ${validation.validCount} applications! Welcome, ${userToLogin.fullName}!`);
+    return { success: true, user: userToLogin, count: validation.validCount };
   };
 
   // Load sample data
@@ -673,6 +810,7 @@ export function AppProvider({ children }) {
     toggleTheme,
     exportData,
     importData,
+    restoreAccountFromBackup,
     restoreFromDiskBackup,
     loadSampleData,
     resetAllData,
